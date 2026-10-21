@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "userprog/gdt.h"
+#include "userprog/syscall.h"
 #include "userprog/tss.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
@@ -17,6 +18,8 @@
 #include "threads/thread.h"
 #include "threads/mmu.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h" /* 해더추가 */
+
 #include "intrinsic.h"
 #ifdef VM
 #include "vm/vm.h"
@@ -33,6 +36,19 @@ static void __do_fork (void *);
 static void
 process_init (void) {
 	struct thread *current = thread_current ();
+
+	/* FD 테이블이 이미 할당되어 있다면 재할당하지 않고 초기화를 종료한다. */
+	if (current->fd_table != NULL) {
+		return;
+	}
+
+	/* FD_MAX개의 파일 디스크립터 슬롯을 할당하고 모든 슬롯을 NULL로 초기화한다. */
+	current->fd_table = calloc (FD_MAX, sizeof *current->fd_table);
+
+	/* 메모리 할당에 실패하면 해당 스레드를 종료한다. */
+	if (current->fd_table == NULL) {
+		thread_exit ();
+	}
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -43,6 +59,8 @@ process_init (void) {
 tid_t
 process_create_initd (const char *file_name) {
 	char *fn_copy;
+	char thread_name[16];               /* struct thread 의 name 크기와 같다. */
+	char *save_ptr;
 	tid_t tid;
 
 	/* Make a copy of FILE_NAME.
@@ -52,8 +70,14 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+	/* 종료 메시지에는 프로그램 이름만 찍혀야 하므로 첫 단어만 스레드 이름으로 쓴다.
+	   fn_copy 는 load () 가 인자 전달에 전체 커맨드라인을 써야 하므로 건드리지 않고,
+	   이름용 복사본을 따로 만들어 자른다. */
+	strlcpy (thread_name, file_name, sizeof thread_name);
+	strtok_r (thread_name, " ", &save_ptr);
+
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create (thread_name, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
@@ -213,10 +237,32 @@ process_wait (tid_t child_tid UNUSED) {
 void
 process_exit (void) {
 	struct thread *curr = thread_current ();
+	int fd;
 	/* TODO: Your code goes here.
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
+	
+	 /* 종료 메시지. 페이지 테이블 (pml4) 이 있는 스레드만 유저 프로세스이므로
+	   커널 스레드는 찍지 않는다. process_cleanup () 이 pml4 를 지우기 전에 확인한다. */
+	if (curr->pml4 != NULL)
+		printf ("%s: exit(%d)\n", curr->name, curr->exit_status);
+
+	/* 파일 디스크립터 테이블이 할당되어 있는지 확인한다. */
+	if (curr->fd_table != NULL) {
+		/* 일반 파일 디스크립터 범위 전체를 순회한다. */
+		lock_acquire (&filesys_lock);
+		for (fd = 0; fd < FD_MAX; fd++) {
+			/* 해당 슬롯에 열린 파일이 있으면 파일을 닫는다. */
+			if (curr->fd_table[fd] != NULL)
+				file_close (curr->fd_table[fd]);
+		}
+		lock_release (&filesys_lock);
+		/* 파일 디스크립터 테이블에 할당된 메모리를 해제한다. */
+		free (curr->fd_table);
+		/* 해제된 메모리를 가리키지 않도록 포인터를 초기화한다. */
+		curr->fd_table = NULL;
+	}
 
 	process_cleanup ();
 }
