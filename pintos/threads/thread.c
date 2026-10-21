@@ -207,7 +207,12 @@ tid_t thread_create(const char *name, int priority,
 	t->tf.ss = SEL_KDSEG;
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
-	t->parent = thread_current ();
+	#ifdef USERPROG
+		/* 핀토스는 스레드 하나가 프로세스 하나이므로, 스레드를 만든 쪽을 부모로 등록한다.
+		wait 이 직계 자식을 찾을 수 있게 부모의 자식 목록에도 넣는다. */
+		t->parent = thread_current ();
+		list_push_back (&thread_current ()->children, &t->child_elem);
+	#endif
 
 	/* Add to run queue. */
 	thread_unblock(t);

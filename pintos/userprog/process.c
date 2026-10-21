@@ -245,7 +245,7 @@ process_wait (tid_t child_tid) {
 	for (c = list_begin (&cur->children); c != list_end (&cur->children); c = list_next (c)) {
 		struct thread *cur_child = list_entry (c, struct thread, child_elem);
 		if (cur_child->tid == child_tid) {
-			child = &cur_child;
+			child = cur_child;
 			break;
 		}
 	}
