@@ -202,11 +202,41 @@ process_exec (void *f_name) {
  * This function will be implemented in problem 2-2.  For now, it
  * does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) {
+process_wait (tid_t child_tid) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-	return -1;
+
+	/* 번호로 TCB를 찾는 과정 */
+	/* 부모(thread_current ())는 자기 자식들을 children 목록에 들고 있음
+	그 목록을 하나씩 돌면서, 각 자식의 tid가 child_tid랑 같은지 비교
+	같은 걸 찾으면 그게 자식의 TCB → 이제 ->exit_status 같은 걸 쓸 수 있음
+	끝까지 돌았는데 없으면? 직계 자식이 아니라는 뜻 → -1
+	*/
+	
+	struct thread *cur = thread_current ();
+	struct list_elem *c;
+	struct thread *child = NULL;
+
+	for (c = list_begin (&cur->children); c != list_end (&cur->children); c = list_next (c)) {
+		struct thread *cur_child = list_entry (c, struct thread, child_elem);
+		if (cur_child->tid == child_tid) {
+			child = &cur_child;
+			break;
+		}
+	}
+
+	if (child == NULL) {
+		return -1;
+	}
+
+	/* 자식을 찾은 경우: 기다리기 → 읽기 → 목록에서 빼기 → 놓아주기 */
+	sema_down (&child->wait_sema);
+	int child_exit_status = child->exit_status;
+	list_remove (&child->child_elem);
+	sema_up (&child->free_sema);
+
+	return child_exit_status;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
@@ -217,7 +247,13 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
-
+	
+	/* 부모가 wait 으로 종료 상태를 읽을 수 있게 깨우고, 다 읽을 때까지 TCB 가 해제되지 않도록 기다린다. */
+	 if (curr->parent != NULL) {
+		sema_up (&curr->wait_sema);
+		sema_down (&curr->free_sema);
+	}
+	
 	process_cleanup ();
 }
 
