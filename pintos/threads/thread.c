@@ -207,6 +207,7 @@ tid_t thread_create(const char *name, int priority,
 	t->tf.ss = SEL_KDSEG;
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
+	t->parent = thread_current ();
 
 	/* Add to run queue. */
 	thread_unblock(t);
